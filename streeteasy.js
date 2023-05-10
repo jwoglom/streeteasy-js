@@ -65,6 +65,10 @@ function checkArgs(args) {
   if ((!args.rent && !args.buy) || !args.locations) {
     return 'Required --rent/--buy and --locations';
   }
+
+  if (args.page && args.pages) {
+    return 'Only one of --page and --pages can be provided'
+  }
   return null;
 }
 
@@ -80,7 +84,8 @@ async function launchFromArgs(browser, args, toStdout) {
   const noFee = args.noFee;
   const sortBy = args.sortBy;
   const pageNumber = args.page;
-  return await launch(browser, rentOrBuy, locations, unitTypes, beds, minPrice, maxPrice, noFee, sortBy, pageNumber, toStdout);
+  const pageNumbers = args.pages;
+  return await launch(browser, rentOrBuy, locations, unitTypes, beds, minPrice, maxPrice, noFee, sortBy, pageNumber, pageNumbers, toStdout);
 }
 
 function rand(x, y) {
@@ -208,13 +213,15 @@ function buildUrl(rentOrBuy, locationNames, unitTypes, beds, minPrice, maxPrice,
   return url;
 }
 
-async function launch(browser, rentOrBuy, locationNames, unitTypes, beds, minPrice, maxPrice, noFee, sortBy, pageNumber, toStdout) {
-  process.stderr.write('launch('+rentOrBuy+', locationNames='+locationNames+', unitTypes='+unitTypes+', beds='+beds+', minPrice='+minPrice+', maxPrice='+maxPrice+', noFee='+noFee+', sortBy='+sortBy+', pageNumber='+pageNumber+')\n');
-  const url = buildUrl(rentOrBuy, locationNames, unitTypes, beds, minPrice, maxPrice, noFee, sortBy, pageNumber);
-  process.stderr.write('url: ' + url + '\n');
+async function launch(browser, rentOrBuy, locationNames, unitTypes, beds, minPrice, maxPrice, noFee, sortBy, pageNumber, pageNumbers, toStdout) {
+  process.stderr.write('launch('+rentOrBuy+', locationNames='+locationNames+', unitTypes='+unitTypes+', beds='+beds+', minPrice='+minPrice+', maxPrice='+maxPrice+', noFee='+noFee+', sortBy='+sortBy+', pageNumber='+pageNumber+', pageNumbers='+pageNumbers+')\n');
 
   const page = await browser.newPage()
-  await page.setDefaultNavigationTimeout(30000);
+  if (pageNumbers) {
+    await page.setDefaultNavigationTimeout(30000 * parseInt(pageNumbers));
+  } else {
+    await page.setDefaultNavigationTimeout(30000);
+  }
 
   await page.setRequestInterception(true);
 
@@ -252,88 +259,129 @@ async function launch(browser, rentOrBuy, locationNames, unitTypes, beds, minPri
     });
   });
 
-  process.stderr.write('Opening StreetEasy\n')
-  await page.goto(url, { waitUntil: 'networkidle2' });
-  process.stderr.write('Waiting for search results\n');
+  async function processPage(curPage) {
+    const url = buildUrl(rentOrBuy, locationNames, unitTypes, beds, minPrice, maxPrice, noFee, sortBy, curPage);
+    process.stderr.write('url: ' + url + '\n');
 
-  await page.waitForFunction(_ => {
-    return document.querySelectorAll('.listingCard').length > 0 || document.querySelectorAll('.no_results').length > 0 || document.querySelectorAll('#px-captcha').length > 0
-  })
+    process.stderr.write('Opening StreetEasy\n')
+    await page.goto(url, { waitUntil: 'networkidle2' });
+    process.stderr.write('Waiting for search results\n');
 
-  let hasCaptcha = await page.evaluate(_ => {
-    return document.querySelectorAll('#px-captcha').length > 0
-  });
+    await page.waitForFunction(_ => {
+      return document.querySelectorAll('.listingCard').length > 0 || document.querySelectorAll('.no_results').length > 0 || document.querySelectorAll('#px-captcha').length > 0
+    })
 
-  if (hasCaptcha) {
-    fs.writeFileSync('requests.json', JSON.stringify(allRequests));
-    const errorObj = {"error": "Received CAPTCHA"};
+    let hasCaptcha = await page.evaluate(_ => {
+      return document.querySelectorAll('#px-captcha').length > 0
+    });
+
+    if (hasCaptcha) {
+      fs.writeFileSync('requests.json', JSON.stringify(allRequests));
+      const errorObj = {"error": "Received CAPTCHA"};
+      if (toStdout) {
+        process.stdout.write(JSON.stringify(errorObj));
+        return null;
+      } else {
+        process.stderr.write('Error: Received CAPTCHA\n');
+        return errorObj;
+      }
+    }
+
+    process.stderr.write('Parsing search results\n');
+
+    let res = await page.evaluate(_ => {
+      let results = [];
+      document.querySelectorAll('.listingCard')?.forEach((l, i) => {
+        let a = l.querySelector('a');
+        let beds = null, bath = null, sqft = null, featured = false, sponsored = false, verified = false;
+        Array.from(l.querySelectorAll('.listingDetailDefinitions > .listingDetailDefinitionsItem') || [])?.forEach((item) => {
+            const val = item.querySelector('.listingDetailDefinitionsText')?.innerText;
+            if (item.querySelectorAll('.listingDetailDefinitionsIcon--bed').length > 0) {
+                beds = val;
+            } else if (item.querySelectorAll('.listingDetailDefinitionsIcon--bath').length > 0) {
+                bath = val;
+            } else if (item.querySelectorAll('.listingDetailDefinitionsIcon--measure').length > 0) {
+                sqft = val?.split('\n')[0].trim();
+            }
+        });
+        Array.from(l.querySelector('.listingCardTop .listingCardLabel') || [])?.forEach((item) => {
+          if (item.getAttribute('data-featured-event-category')) {
+            featured = item.getAttribute('data-featured-event-category');
+          } else if (item.innerText.contains('Sponsored')) {
+            sponsored = true;
+          } else if (item.querySelectorAll('.listingCardLabel-checkIcon').length > 0) {
+            verified = true;
+          }
+        });
+        results.push({
+            'index': i,
+            'id': a.getAttribute('data-label-id')?.split('-')[0],
+            'address': l.querySelector('address')?.innerText,
+            'addressUrl': l.querySelector('address')?.querySelector('a')?.getAttribute('href'),
+            'geo': a.getAttribute('data-map-points') || a.getAttribute('se:map:point'),
+            'url': a.getAttribute('href'),
+            'summary': l.querySelector('.listingCardBottom')?.querySelector('.listingCardLabel')?.innerText,
+            'label': l.querySelector('#' + a.getAttribute('aria-labelledby'))?.innerText,
+            'images': Array.from(l.querySelectorAll('img')).map(img => img.getAttribute('data-flickity-lazyload') || img.getAttribute('src')),
+            'listingBy': l.querySelector('.listingCardBottom--finePrint')?.innerText,
+            'beds': beds,
+            'bath': bath,
+            'sqft': sqft,
+            'price': l.querySelector('.price')?.innerText,
+            'featured': featured,
+            'sponsored': sponsored,
+            'verified': verified
+        });
+      });
+      return JSON.stringify(results);
+    });
+
+    return res;
+  }
+
+  function finishProcess(res) {
     if (toStdout) {
-      process.stdout.write(JSON.stringify(errorObj));
-      return;
+      process.stdout.write(res);
+      fs.writeFileSync('output.json', res);
+
+      fs.writeFileSync('requests.json', JSON.stringify(allRequests));
+      return null;
     } else {
-      process.stderr.write('Error: Received CAPTCHA\n');
-      return errorObj;
+      process.stderr.write('Done\n');
+      return JSON.parse(res);
     }
   }
 
-  process.stderr.write('Parsing search results\n');
-
-  let res = await page.evaluate(_ => {
-    let results = [];
-    document.querySelectorAll('.listingCard')?.forEach((l, i) => {
-      let a = l.querySelector('a');
-      let beds = null, bath = null, sqft = null, featured = false, sponsored = false, verified = false;
-      Array.from(l.querySelectorAll('.listingDetailDefinitions > .listingDetailDefinitionsItem') || [])?.forEach((item) => {
-          const val = item.querySelector('.listingDetailDefinitionsText')?.innerText;
-          if (item.querySelectorAll('.listingDetailDefinitionsIcon--bed').length > 0) {
-              beds = val;
-          } else if (item.querySelectorAll('.listingDetailDefinitionsIcon--bath').length > 0) {
-              bath = val;
-          } else if (item.querySelectorAll('.listingDetailDefinitionsIcon--measure').length > 0) {
-              sqft = val?.split('\n')[0].trim();
-          }
-      });
-      Array.from(l.querySelector('.listingCardTop .listingCardLabel') || [])?.forEach((item) => {
-        if (item.getAttribute('data-featured-event-category')) {
-          featured = item.getAttribute('data-featured-event-category');
-        } else if (item.innerText.contains('Sponsored')) {
-          sponsored = true;
-        } else if (item.querySelectorAll('.listingCardLabel-checkIcon').length > 0) {
-          verified = true;
-        }
-      });
-      results.push({
-          'index': i,
-          'id': a.getAttribute('data-label-id')?.split('-')[0],
-          'address': l.querySelector('address')?.innerText,
-          'addressUrl': l.querySelector('address')?.querySelector('a')?.getAttribute('href'),
-          'geo': a.getAttribute('data-map-points') || a.getAttribute('se:map:point'),
-          'url': a.getAttribute('href'),
-          'summary': l.querySelector('.listingCardBottom')?.querySelector('.listingCardLabel')?.innerText,
-          'label': l.querySelector('#' + a.getAttribute('aria-labelledby'))?.innerText,
-          'images': Array.from(l.querySelectorAll('img')).map(img => img.getAttribute('data-flickity-lazyload') || img.getAttribute('src')),
-          'listingBy': l.querySelector('.listingCardBottom--finePrint')?.innerText,
-          'beds': beds,
-          'bath': bath,
-          'sqft': sqft,
-          'price': l.querySelector('.price')?.innerText,
-          'featured': featured,
-          'sponsored': sponsored,
-          'verified': verified
-      });
-    });
-    return JSON.stringify(results);
-  });
+  let res = [];
+  if (!pageNumbers) {
+    res = await processPage(pageNumber);
+  } else {
+    let successfulLoops = 0;
+    for (let i=1; i<=parseInt(pageNumbers); i++) {
+      process.stderr.write('Processing page '+i+' of '+pageNumbers+'\n');
+      let curRes = await processPage(i);
+      if (curRes === null && successfulLoops > 0) {
+        // partial complete, return what could be recieved
+        process.stderr.write('Partial complete, exiting\n')
+        return finishProcess(res);
+      } else if (curRes === null && successfulLoops == 0) {
+        return curRes;
+      } else if (curRes['error'] && successfulLoops > 0) {
+        // partial complete, return what could be recieved
+        process.stderr.write('Partial complete: '+curRes+'\n');
+        return finishProcess(res);
+      } else if (curRes['error'] && successfulLoops == 0) {
+        return curRes;
+      }
+      res = [...res, ...JSON.parse(curRes)];
+      process.stderr.write('Finished page '+i+' of '+pageNumbers + '\n');
+      page.waitForTimeout(10000 + 5000*(i-1));
+      successfulLoops++;
+    }
+  }
+  res = JSON.stringify(res);
 
   await page.close();
 
-  if (toStdout) {
-    process.stdout.write(res);
-    fs.writeFileSync('output.json', res);
-
-    fs.writeFileSync('requests.json', JSON.stringify(allRequests));
-  } else {
-    process.stderr.write('Done\n');
-    return JSON.parse(res);
-  }
+  return finishProcess(res);
 }

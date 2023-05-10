@@ -15,7 +15,8 @@ USER pptruser
 WORKDIR /home/pptruser
 
 COPY package.json .
-COPY data .
+RUN mkdir data
+COPY data data/
 COPY streeteasy.js .
 RUN npm install
 

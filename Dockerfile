@@ -15,8 +15,8 @@ USER pptruser
 WORKDIR /home/pptruser
 
 COPY package.json .
-COPY amtrak.js .
-COPY postprocess.sh .
+COPY data .
+COPY streeteasy.js .
 RUN npm install
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true

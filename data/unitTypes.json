@@ -1,0 +1,18 @@
+[
+    {
+        "id": "X",
+        "name": "Houses"
+    },
+    {
+        "id": "D1",
+        "name": "Condos"
+    },
+    {
+        "id": "P1",
+        "name": "Co-ops"
+    },
+    {
+        "id": "M",
+        "name": "Multi-families"
+    }
+]

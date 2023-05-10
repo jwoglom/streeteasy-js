@@ -1,0 +1,26 @@
+[
+    {
+        "id": "listed_desc",
+        "name": "Newest"
+    },
+    {
+        "id": "interesting_desc",
+        "name": "Recently updated"
+    },
+    {
+        "id": "price_desc",
+        "name": "Most expensive"
+    },
+    {
+        "id": "price_asc",
+        "name": "Least expensive"
+    },
+    {
+        "id": "sqft_desc",
+        "name": "Largest"
+    },
+    {
+        "id": "sqft_asc",
+        "name": "Smallest"
+    }
+]

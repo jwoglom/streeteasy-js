@@ -92,6 +92,19 @@ function rand(x, y) {
   return x + Math.random() * (y-x);
 }
 
+async function simulatedScrollDown(page) {
+  const client = await page.target().createCDPSession();
+  for (let i=0; i<rand(3,8); i++) {
+    await client.send("Input.synthesizeScrollGesture", {
+      x: 0,
+      y: 0,
+      xDistance: 0,
+      yDistance: -1 * rand(100, 300),
+    });
+    await page.waitForTimeout(rand(100, 300));
+  }
+}
+
 function getAreaIds(locationsStr) {
   let ids = [];
   const locations = locationsStr.split(',');
@@ -356,6 +369,9 @@ async function launch(browser, rentOrBuy, locationNames, unitTypes, beds, minPri
   if (!pageNumbers) {
     res = await processPage(pageNumber);
   } else {
+    await page.goto('https://streeteasy.com/', { waitUntil: 'networkidle2' });
+    await simulatedScrollDown(page);
+
     let successfulLoops = 0;
     for (let i=1; i<=parseInt(pageNumbers); i++) {
       process.stderr.write('Processing page '+i+' of '+pageNumbers+'\n');
@@ -375,7 +391,10 @@ async function launch(browser, rentOrBuy, locationNames, unitTypes, beds, minPri
       }
       res = [...res, ...JSON.parse(curRes)];
       process.stderr.write('Finished page '+i+' of '+pageNumbers + '\n');
-      page.waitForTimeout(10000 + 5000*(i-1));
+      if (i != parseInt(pageNumbers)) {
+        await simulatedScrollDown(page);
+        await page.waitForTimeout(4000 + 4000*(i-1));
+      }
       successfulLoops++;
     }
   }

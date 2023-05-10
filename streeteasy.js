@@ -30,18 +30,14 @@ if (!!args['webui']) {
 
   puppeteer.launch(options).then(async browser => {
     console.log("Launched puppeteer")
-    app.get("/request", async (req, res, next) => {
-      let origin = req.query.origin;
-      let dest = req.query.dest;
-      let date = req.query.date;
-
-      if (!origin || !dest || !date) {
-        res.json({'error': 'Required --origin CODE, --dest CODE, and --date MM/DD/YYYY'});
+    app.get("/request", async (req, res, next) => {    
+      const error = checkArgs(req.query);
+      if (error) {
+        res.json({"error": error});
         return;
       }
 
-
-      res.json(await launch(browser, origin, dest, date, false));
+      res.json(await launchFromArgs(browser, req.query, false));
     });
   });
 
@@ -50,28 +46,41 @@ if (!!args['webui']) {
   });
   
 } else {
-
-  if ((!args.rent && !args.buy) || !args.locations) {
-    console.error('Required --rent/--buy and --locations');
+  
+  const error = checkArgs(args);
+  if (error) {
+    console.error(error);
     process.exit(1);
   }
 
   process.stderr.write('Launching puppeteer\n')
   puppeteer.launch(options).then(async browser => {
-    let rentOrBuy = '';
-    if (args.rent) rentOrBuy = 'rent';
-    if (args.buy) rentOrBuy = 'buy';
-    const locations = args.locations;
-    const unitTypes = args.unitTypes;
-    const beds = args.beds;
-    const minPrice = args.minPrice;
-    const maxPrice = args.maxPrice;
-    const noFee = args.noFee;
-    const sortBy = args.sortBy;
-    const pageNumber = args.page;
-    await launch(browser, rentOrBuy, locations, unitTypes, beds, minPrice, maxPrice, noFee, sortBy, pageNumber, true);
+    await launchFromArgs(browser, args, true);
     await browser.close()
   })
+}
+
+function checkArgs(args) {
+  process.stderr.write('request args: '+JSON.stringify(args)+'\n');
+  if ((!args.rent && !args.buy) || !args.locations) {
+    return 'Required --rent/--buy and --locations';
+  }
+  return null;
+}
+
+async function launchFromArgs(browser, args, toStdout) {
+  let rentOrBuy = '';
+  if (args.rent) rentOrBuy = 'rent';
+  if (args.buy) rentOrBuy = 'buy';
+  const locations = args.locations;
+  const unitTypes = args.unitTypes;
+  const beds = args.beds;
+  const minPrice = args.minPrice;
+  const maxPrice = args.maxPrice;
+  const noFee = args.noFee;
+  const sortBy = args.sortBy;
+  const pageNumber = args.page;
+  return await launch(browser, rentOrBuy, locations, unitTypes, beds, minPrice, maxPrice, noFee, sortBy, pageNumber, toStdout);
 }
 
 function rand(x, y) {

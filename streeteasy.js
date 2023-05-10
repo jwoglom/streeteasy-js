@@ -41,8 +41,13 @@ if (!!args['webui']) {
     });
   });
 
-  app.listen(3000, () => {
-    console.log("Server running on port 3000");
+  let port = 3000;
+  if (!!args['port']) {
+    port = parseInt(args['port']);
+  }
+
+  app.listen(port, () => {
+    console.log("Server running on port " + port);
   });
   
 } else {
